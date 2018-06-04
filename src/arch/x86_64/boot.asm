@@ -1,6 +1,7 @@
 ;Based on the tutorials by Phil Opperman
 
 global start
+extern long_mode_start
 
 section .text
 bits 32
@@ -14,15 +15,9 @@ start:
     call setup_page_tables
     call enable_paging
 
-    ; print 'NeblogOS' to the screen
-    mov word [0xB8000], 0x0C4e ; N
-	mov word [0xb8002], 0x0E65 ; e
-	mov word [0xb8004], 0x0A62 ; b
-	mov word [0xb8006], 0x096c ; l
-	mov word [0xb8008], 0x0C6f ; o
-	mov word [0xb800a], 0x0E67 ; g
-	mov word [0xb800c], 0x0A4f ; O
-	mov word [0xb800e], 0x0953 ; S
+    ; load the 64-bit GDT
+    lgdt [gdt64.pointer]
+    jmp gdt64.code:long_mode_start
     hlt
 
 setup_page_tables:
@@ -73,6 +68,14 @@ enable_paging:
 
     ret
 
+section .rodata
+gdt64:
+    dq 0 ; zero entry
+.code: equ $ - gdt64 ; new
+    dq (1<<43) | (1<<44) | (1<<47) | (1<<53) ; code segment
+.pointer:
+    dw $ - gdt64 - 1
+    dq gdt64
 ; Prints `ERR: ` and the given error code to screen and hangs.
 ; parameter: error code (in ascii) in al
 error:

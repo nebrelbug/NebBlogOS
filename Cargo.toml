@@ -1,0 +1,10 @@
+[package]
+name = "neblog_os"
+version = "0.1.0"
+authors = ["Ben Gubler <nebrelbug@gmail.com>"]
+
+[lib]
+crate-type = ["staticlib"]
+
+[dependencies]
+rlibc = "1.0"
