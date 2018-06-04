@@ -1,13 +1,19 @@
+;Based on the tutorials by Phil Opperman
+
 global start
 
 section .text
 bits 32
 start:
     mov esp, stack_top
-    ;call our check functions
+
     call check_multiboot
     call check_cpuid
     call check_long_mode
+
+    call setup_page_tables
+    call enable_paging
+
     ; print 'NeblogOS' to the screen
     mov word [0xB8000], 0x0C4e ; N
 	mov word [0xb8002], 0x0E65 ; e
@@ -18,65 +24,55 @@ start:
 	mov word [0xb800c], 0x0A4f ; O
 	mov word [0xb800e], 0x0953 ; S
     hlt
-;Now a lot of checks to make sure stuff is supported
-check_multiboot:
-    cmp eax, 0x36d76289 ;another magic number
-    jne .no_multiboot
+
+setup_page_tables:
+    ; map first P4 entry to P3 table
+    mov eax, p3_table
+    or eax, 0b11 ; present + writable
+    mov [p4_table], eax
+
+    ; map first P3 entry to P2 table
+    mov eax, p2_table
+    or eax, 0b11 ; present + writable
+    mov [p3_table], eax
+    mov ecx, 0
+
+.map_p2_table:
+    ; map ecx-th P2 entry to a huge page that starts at address 2MiB*ecx
+    mov eax, 0x200000  ; 2MiB
+    mul ecx            ; start address of ecx-th page
+    or eax, 0b10000011 ; present + writable + huge
+    mov [p2_table + ecx * 8], eax ; map ecx-th entry
+
+    inc ecx            ; increase counter
+    cmp ecx, 512       ; if counter == 512, the whole P2 table is mapped
+    jne .map_p2_table  ; else map the next entry
+
     ret
-.no_multiboot:
-    mov al, "0"
-    jmp error ;call error
-check_cpuid: ;check if we can get info from cpuid
-    ; Check if CPUID is supported by attempting to flip the ID bit (bit 21)
-    ; in the FLAGS register. If we can flip it, CPUID is available.
 
-    ; Copy FLAGS in to EAX via stack
-    pushfd
-    pop eax
+enable_paging:
+    ; load P4 to cr3 register (cpu uses this to access the P4 table)
+    mov eax, p4_table
+    mov cr3, eax
 
-    ; Copy to ECX as well for comparing later on
-    mov ecx, eax
+    ; enable PAE-flag in cr4 (Physical Address Extension)
+    mov eax, cr4
+    or eax, 1 << 5
+    mov cr4, eax
 
-    ; Flip the ID bit
-    xor eax, 1 << 21
+    ; set the long mode bit in the EFER MSR (model specific register)
+    mov ecx, 0xC0000080
+    rdmsr
+    or eax, 1 << 8
+    wrmsr
 
-    ; Copy EAX to FLAGS via the stack
-    push eax
-    popfd
+    ; enable paging in the cr0 register
+    mov eax, cr0
+    or eax, 1 << 31
+    mov cr0, eax
 
-    ; Copy FLAGS back to EAX (with the flipped bit if CPUID is supported)
-    pushfd
-    pop eax
-
-    ; Restore FLAGS from the old version stored in ECX (i.e. flipping the
-    ; ID bit back if it was ever flipped).
-    push ecx
-    popfd
-
-    ; Compare EAX and ECX. If they are equal then that means the bit
-    ; wasn't flipped, and CPUID isn't supported.
-    cmp eax, ecx
-    je .no_cpuid ; jump to no_cpuid
     ret
-.no_cpuid:
-    mov al, "1"
-    jmp error;then call error
-check_long_mode:;see if we can use 'long mode' (64-bit)
-    ; test if extended processor info in available
-    mov eax, 0x80000000    ; implicit argument for cpuid
-    cpuid                  ; get highest supported argument
-    cmp eax, 0x80000001    ; it needs to be at least 0x80000001
-    jb .no_long_mode       ; if it's less, the CPU is too old for long mode
 
-    ; use extended info to test if long mode is available
-    mov eax, 0x80000001    ; argument for extended processor info
-    cpuid                  ; returns various feature bits in ecx and edx
-    test edx, 1 << 29      ; test if the LM-bit is set in the D-register
-    jz .no_long_mode       ; If it's not set, there is no long mode
-    ret
-.no_long_mode:
-    mov al, "2"
-    jmp error
 ; Prints `ERR: ` and the given error code to screen and hangs.
 ; parameter: error code (in ascii) in al
 error:
@@ -85,7 +81,58 @@ error:
     mov dword [0xb8008], 0x4f204f20
     mov byte  [0xb800a], al
     hlt
+
+; Throw error 0 if eax doesn't contain the Multiboot 2 magic value (0x36d76289).
+check_multiboot:
+    cmp eax, 0x36d76289
+    jne .no_multiboot
+    ret
+.no_multiboot:
+    mov al, "0"
+    jmp error
+
+; Throw error 1 if the CPU doesn't support the CPUID command.
+check_cpuid:
+    pushfd               ; Store the FLAGS-register.
+    pop eax              ; Restore the A-register.
+    mov ecx, eax         ; Set the C-register to the A-register.
+    xor eax, 1 << 21     ; Flip the ID-bit, which is bit 21.
+    push eax             ; Store the A-register.
+    popfd                ; Restore the FLAGS-register.
+    pushfd               ; Store the FLAGS-register.
+    pop eax              ; Restore the A-register.
+    push ecx             ; Store the C-register.
+    popfd                ; Restore the FLAGS-register.
+    xor eax, ecx         ; Do a XOR-operation on the A-register and the C-register.
+    jz .no_cpuid         ; The zero flag is set, no CPUID.
+    ret                  ; CPUID is available for use.
+.no_cpuid:
+    mov al, "1"
+    jmp error
+
+; Throw error 2 if the CPU doesn't support Long Mode.
+check_long_mode:
+    mov eax, 0x80000000    ; Set the A-register to 0x80000000.
+    cpuid                  ; CPU identification.
+    cmp eax, 0x80000001    ; Compare the A-register with 0x80000001.
+    jb .no_long_mode       ; It is less, there is no long mode.
+    mov eax, 0x80000000    ; Set the A-register to 0x80000000.
+    cpuid                  ; CPU identification.
+    cmp eax, 0x80000001    ; Compare the A-register with 0x80000001.
+    jb .no_long_mode       ; It is less, there is no long mode.
+    ret
+.no_long_mode:
+    mov al, "2"
+    jmp error
+
 section .bss
+align 4096
+p4_table:
+    resb 4096
+p3_table:
+    resb 4096
+p2_table:
+    resb 4096
 stack_bottom:
     resb 64
 stack_top:
