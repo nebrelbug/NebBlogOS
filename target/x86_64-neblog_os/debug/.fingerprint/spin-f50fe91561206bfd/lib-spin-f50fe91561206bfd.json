@@ -1,0 +1,1 @@
+{"rustc":10246027807469938785,"features":"[\"asm\", \"const_fn\", \"core_intrinsics\", \"default\", \"once\", \"unstable\"]","target":5854055808098174801,"profile":7990393541957723157,"path":6161167984688288961,"deps":[],"local":[{"Precalculated":"0.4.8"}],"rustflags":["--sysroot","/mnt/c/Users/nebre/wslnebrelbughome/.xargo"],"edition":"Edition2015"}
