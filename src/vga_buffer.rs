@@ -106,12 +106,19 @@ impl Writer {
 
     pub fn set_pos(&mut self, xpos: usize, ypos: usize, character: char) {
         let color = self.color_code;
-        let buffer = self.buffer();
-        buffer.chars[ypos][xpos].write(ScreenChar {
-            //Set current position to char
-            ascii_character: character as u8,
-            color_code: color,
-        });
+        if xpos < BUFFER_WIDTH && ypos < BUFFER_HEIGHT {
+            let buffer = self.buffer();
+            buffer.chars[ypos][xpos].write(ScreenChar {
+                //Set current position to char
+                ascii_character: character as u8,
+                color_code: color,
+            });
+        } else {
+            for byte in "Sorry, you can't write to a location outside the framebuffer".bytes() {
+                self.write_byte(byte)
+            }
+            self.write_byte('\n' as u8) //New line
+        }
     }
 
     fn clear_row(&mut self, row: usize) {
@@ -125,6 +132,7 @@ impl Writer {
     }
 }
 
+/*IMPLEMENTING MACROS*/
 impl fmt::Write for Writer {
     fn write_str(&mut self, s: &str) -> fmt::Result {
         for byte in s.bytes() {
@@ -185,3 +193,4 @@ pub fn clear_screen() {
         println!("");
     }
 }
+/*END OF IMPLEMENTING MACROS*/
